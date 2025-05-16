@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+      <style>
+      .canvasInput-wrap {
+        width: 400px;
+      }
+
+      #canvasInput {
+        width: 100%;
+      }
+
+      #qrcodeCanvasOutput {
+        height: 120px;
+        width: 120px;
+        object-fit: contain;
+      }
+    
+      #video {
+        object-fit: contain;
+        max-width: 100%;
+        height: auto;
+      }
+
+      #canvasOutput {
+        object-fit: contain;
+        max-width: 100%;
+        height: auto;
+      }
+
+      #imageWrap {
+        img {
+          margin: 10px 16px;
+        }
+      }
+  </style>
+</head>
+
+<body>
+  <h1>基于Opencv的微信二维码引擎识别</h1>
+  <input type="file" id="fileInput" name="file" />
+  <hr />
+  <div id="qrcodeShowcase">
+    <div>
+      <div class="canvasInput-wrap">
+        <canvas id="canvasInput"></canvas>
+      </div>
+    </div>
+    <hr />
+    <button id="qrcodeTryIt">Try it OpenCV</button><br />
+    <div id="status-wrap">识别结果:<span id="status"></span></div>
+    <hr />
+    <div>
+      <label for="">OpenCV QRCode image:</label>
+      <br />
+      <div id="imageWrap"></div>
+    </div>
+    <div>
+      <video id="video" width="400" height="300" autoplay></video>
+      <canvas id="canvasOutput" width="400" height="300"></canvas>
+      <div>
+        <button id="startCamera">打开摄像头</button>
+        <button id="stopCamera">关闭摄像头</button>
+        <button id="startCapture">开始捕获</button>
+        <button id="stopCapture">停止捕获</button>
+        <button id="swapCanvasDimensions">交换Canvas宽高</button> <!-- 新按钮 -->
+      </div>
+    </div>
+  </div>
+  <script src="./dist/OpencvQr.js"></script>
+  <script src="./decoder_wasm.js"></script>
+  <script>
+    // const cvQr = new OpencvQr({
+    //   dw: "https://leidenglai.github.io/opencv-js-qrcode/models/detect.caffemodel",
+    //   sw: "https://leidenglai.github.io/opencv-js-qrcode/models/sr.caffemodel",
+    // });
+
+    const cvQr = new OpencvQr({
+      dw: "https://hwzen.myds.me:5202/models/detect.caffemodel",
+      sw: "https://hwzen.myds.me:5202/models/sr.caffemodel",
+    });
+
+    function loadImageToCanvas(url, cavansId) {
+      let canvas = document.getElementById(cavansId);
+      let ctx = canvas.getContext("2d");
+      let img = new Image();
+
+      img.crossOrigin = "anonymous";
+      img.onload = function () {
+        const { width, height } = img;
+
+        canvas.width = width;
+        canvas.height = height;
+        ctx?.drawImage(img, 0, 0, width, height);
+      };
+      img.src = url;
+    }
+
+    function imagedataToImage(imagedata) {
+      const canvas = document.createElement("canvas");
+      const ctx = canvas.getContext("2d");
+      canvas.width = imagedata.width;
+      canvas.height = imagedata.height;
+      ctx.putImageData(imagedata, 0, 0);
+
+      const image = new Image();
+
+      image.src = canvas.toDataURL();
+      return image;
+    }
+
+    document.getElementById("qrcodeTryIt")?.addEventListener("click", () => {
+      const t0 = performance.now();
+      const result = cvQr.load("canvasInput");
+      const t1 = performance.now();
+      console.log(`load time: ${t1 - t0} milliseconds`);
+
+      const infos = result?.getInfos();
+      document.getElementById("status").innerText = JSON.stringify(infos);
+
+      // const images = result?.getImages();
+      // 识别的imageData填充页面
+      // images?.forEach((imgData) => {
+      //   const image = imagedataToImage(imgData);
+
+      //   document.getElementById("imageWrap").append(image);
+      // });
+    });
+
+    function qrcodeHandleFiles(e) {
+      const file = e.target.files[0];
+      const qrcodeUrl = URL.createObjectURL(file);
+
+      loadImageToCanvas(qrcodeUrl, "canvasInput");
+    }
+    let fileInputElement = document.getElementById("fileInput");
+
+    fileInputElement?.addEventListener("change", qrcodeHandleFiles, false);
+
+    loadImageToCanvas("./img/1.png", "canvasInput");
+
+    // 摄像头相关代码
+    let video = document.getElementById('video');
+    let canvasOutput = document.getElementById('canvasOutput');
+    let stream = null;
+    let isCapturing = false;
+    let lastProcessTime = 0;
+    let processingFrame = false;
+
+    let decoder = null;
+    const messageByte = 100 * 1024;
+    const blockByte = 1024;
+    const totalBlocks = Math.ceil(messageByte / blockByte);
+    let decodedBlocks = new Set();
+
+    // Module test
+    let module;
+    (async () => {
+      module = await Module();
+      module._testFunc();
+      // 初始化decoder
+      decoder = module._createDecoder(BigInt(messageByte), blockByte);
+      console.log("Decoder initialized");
+    })();
+
+    document.getElementById('startCamera').addEventListener('click', async () => {
+      try {
+        // 先获取视频流
+        stream = await navigator.mediaDevices.getUserMedia({ 
+          video: { 
+            facingMode: "environment",
+          } 
+        });
+        
+        // 获取视频轨道
+        const videoTrack = stream.getVideoTracks()[0];
+        // 获取视频轨道的能力
+        const capabilities = videoTrack.getCapabilities();
+        // 获取当前设置
+        const settings = videoTrack.getSettings();
+        
+        // 设置video元素的源
+        video.srcObject = stream;
+        
+        // 等待视频加载完成
+        await new Promise(resolve => {
+          video.onloadedmetadata = () => {
+            // 获取实际视频的宽高比
+            const actualWidth = settings.width || video.videoWidth;
+            const actualHeight = settings.height || video.videoHeight;
+            
+            // 根据实际宽高比调整video和canvas的尺寸
+            if (actualWidth && actualHeight) {
+              const aspectRatio = actualWidth / actualHeight;
+              // 设置最大宽度为600，高度根据比例计算
+              const maxWidth = 600;
+              const height = Math.round(maxWidth / aspectRatio);
+              
+              // 更新video尺寸
+              video.width = maxWidth;
+              video.height = height;
+              
+              // 更新canvas尺寸
+              canvasOutput.width = maxWidth;
+              canvasOutput.height = height;
+              
+              console.log(`设置视频尺寸: ${maxWidth}x${height}, 实际比例: ${aspectRatio}`);
+            }
+            resolve();
+          };
+        });
+        
+        video.play();
+      } catch (err) {
+        console.error('摄像头访问失败:', err);
+        alert('无法访问摄像头:' + err);
+      }
+    });
+
+    document.getElementById('stopCamera').addEventListener('click', () => {
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+        video.srcObject = null;
+      }
+      isCapturing = false;
+    });
+
+    async function processFrame() {
+      if (!isCapturing || !stream) return;
+
+      const now = performance.now();
+      if (processingFrame) {
+        requestAnimationFrame(processFrame);
+        return;
+      }
+
+      processingFrame = true;
+      const context = canvasOutput.getContext('2d');
+      context.drawImage(video, 0, 0, canvasOutput.width, canvasOutput.height);
+
+      const canvasInput = document.getElementById('canvasInput');
+      const inputContext = canvasInput.getContext('2d');
+      canvasInput.width = canvasOutput.width;
+      canvasInput.height = canvasOutput.height;
+      inputContext.drawImage(canvasOutput, 0, 0);
+
+      try {
+        const result = cvQr.load("canvasInput");
+        const infos = result?.getInfos();
+        if (infos && infos.length > 0) {
+          const qrData = new TextEncoder().encode(infos[0]); // 将字符串转换为 Uint8Array
+          const blockId = new DataView(qrData.buffer).getUint32(0, true); // 前4字节为 blockId
+
+          if (!decodedBlocks.has(blockId)) {
+            const blockData = qrData.slice(4); // 剩余部分为block内容
+            const blockPtr = module._allocData(blockData.length);
+            module.HEAPU8.set(blockData, blockPtr);
+            console.log('param:', blockId, '\n', blockPtr, '\n', blockData.length);
+
+            const decodeResult = module._decode(decoder, blockId, blockPtr, blockData.length);
+            module._freeDecodedData(blockPtr);
+
+            if (decodeResult === 1) { // More data is needed to decode.
+              decodedBlocks.add(blockId);
+              document.getElementById("status").innerText = `已识别 ${decodedBlocks.size} block, 预计需要 ${totalBlocks} block`;
+            } else if (decodeResult === 0) { // Wirehair_Success
+
+              const dataPtr = module._getDecodedData(decoder, messageByte);
+              const decodedData = new Uint8Array(module.HEAPU8.buffer, dataPtr, messageByte);
+              const resultText = new TextDecoder().decode(decodedData);
+              module._freeDecodedData(dataPtr);
+              document.getElementById("status").innerText = `解密完成: ${resultText}`;
+            
+            } else {
+              console.error('解码失败:', decodeResult);
+              document.getElementById("status").innerText = `解码失败: ${decodeResult}`;
+            }
+          }
+        }
+      } catch (error) {
+        console.error('处理帧时出错:', error);
+      }
+
+      processingFrame = false;
+      requestAnimationFrame(processFrame);
+    }
+
+    document.getElementById('startCapture').addEventListener('click', () => {
+      if (!stream) {
+        alert('请先打开摄像头');
+        return;
+      }
+      
+      isCapturing = true;
+      requestAnimationFrame(processFrame);
+    });
+
+    document.getElementById('stopCapture').addEventListener('click', () => {
+      isCapturing = false;
+    });
+
+    document.getElementById('swapCanvasDimensions').addEventListener('click', () => {
+      // 获取当前宽高
+      const currentWidth = canvasOutput.width;
+      const currentHeight = canvasOutput.height;
+
+      // 交换宽高
+      canvasOutput.width = currentHeight;
+      canvasOutput.height = currentWidth;
+
+      console.log(`Canvas宽高已交换: 新宽度=${canvasOutput.width}, 新高度=${canvasOutput.height}`);
+    });
+  </script>
+</body>
