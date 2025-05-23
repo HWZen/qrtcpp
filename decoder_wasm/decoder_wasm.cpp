@@ -11,10 +11,7 @@
 #define EXPORT
 #endif
 
-extern "C" {
-
-EXPORT
-WirehairCodec createDecoder(uint64_t messageByte, uint32_t blockBytes)
+void initWirehair()
 {
     static bool initWirehair = [] {
         const WirehairResult initResult = wirehair_init();
@@ -23,8 +20,24 @@ WirehairCodec createDecoder(uint64_t messageByte, uint32_t blockBytes)
         }
         return true;
     }();
+}
+
+extern "C" {
+
+EXPORT
+WirehairCodec createDecoder(uint64_t messageByte, uint32_t blockBytes)
+{
+    initWirehair();
     return wirehair_decoder_create(nullptr, messageByte, blockBytes);
 }
+
+EXPORT
+WirehairCodec createEncoder(const void* message, uint64_t messageByte, uint32_t blockBytes)
+{
+    initWirehair();
+    return wirehair_encoder_create(nullptr, message, messageByte, blockBytes);
+}
+
 
 EXPORT
 WirehairResult decode(WirehairCodec decoder, unsigned blockId, const void* blockData, uint32_t blockSize)
@@ -49,8 +62,8 @@ uint8_t* getDecodedData(WirehairCodec decoder, uint64_t size)
 }
 
 EXPORT
-void destroyDecoder(WirehairCodec decoder) {
-    wirehair_free(decoder);
+void destroyCoder(WirehairCodec coder) {
+    wirehair_free(coder);
 }
 
 EXPORT
@@ -60,7 +73,7 @@ void *allocData(size_t dataSize)
 }
 
 EXPORT
-void freeDecodedData(uint8_t* data) {
+void freeData(void* data) {
     free(data);
 }
 
