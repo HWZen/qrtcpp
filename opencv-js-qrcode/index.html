@@ -5,38 +5,38 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-      <style>
-      .canvasInput-wrap {
-        width: 400px;
-      }
+  <style>
+    .canvasInput-wrap {
+      width: 400px;
+    }
 
-      #canvasInput {
-        width: 100%;
-      }
+    #canvasInput {
+      width: 100%;
+    }
 
-      #qrcodeCanvasOutput {
-        height: 120px;
-        width: 120px;
-        object-fit: contain;
-      }
-    
-      #video {
-        object-fit: contain;
-        max-width: 100%;
-        height: auto;
-      }
+    #qrcodeCanvasOutput {
+      height: 120px;
+      width: 120px;
+      object-fit: contain;
+    }
 
-      #canvasOutput {
-        object-fit: contain;
-        max-width: 100%;
-        height: auto;
-      }
+    #video {
+      object-fit: contain;
+      max-width: 100%;
+      height: auto;
+    }
 
-      #imageWrap {
-        img {
-          margin: 10px 16px;
-        }
+    #canvasOutput {
+      object-fit: contain;
+      max-width: 100%;
+      height: auto;
+    }
+
+    #imageWrap {
+      img {
+        margin: 10px 16px;
       }
+    }
   </style>
 </head>
 
@@ -65,9 +65,7 @@
       <div>
         <button id="startCamera">打开摄像头</button>
         <button id="stopCamera">关闭摄像头</button>
-        <button id="startCapture">开始捕获</button>
-        <button id="stopCapture">停止捕获</button>
-        <button id="swapCanvasDimensions">交换Canvas宽高</button> <!-- 新按钮 -->
+        <button id="swapCanvasDimensions">交换Canvas宽高</button>
       </div>
     </div>
   </div>
@@ -151,10 +149,11 @@
     let lastProcessTime = 0;
     let processingFrame = false;
 
-    let decoder = null;
-    const messageByte = 100 * 1024;
-    const blockByte = 1024;
-    const totalBlocks = Math.ceil(messageByte / blockByte);
+    var decoder = null;
+    var blockByte = null;
+    var messageByte = null;
+    var totalBlocks
+    // const totalBlocks = Math.ceil(messageByte / blockByte);
     let decodedBlocks = new Set();
 
     // Module test
@@ -163,58 +162,61 @@
       module = await Module();
       module._testFunc();
       // 初始化decoder
-      decoder = module._createDecoder(BigInt(messageByte), blockByte);
-      console.log("Decoder initialized");
+      // decoder = module._createDecoder(BigInt(messageByte), blockByte);
+      // console.log("Decoder initialized");
     })();
 
     document.getElementById('startCamera').addEventListener('click', async () => {
       try {
         // 先获取视频流
-        stream = await navigator.mediaDevices.getUserMedia({ 
-          video: { 
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
             facingMode: "environment",
-          } 
+          }
         });
-        
+
         // 获取视频轨道
         const videoTrack = stream.getVideoTracks()[0];
         // 获取视频轨道的能力
         const capabilities = videoTrack.getCapabilities();
         // 获取当前设置
         const settings = videoTrack.getSettings();
-        
+
         // 设置video元素的源
         video.srcObject = stream;
-        
+
         // 等待视频加载完成
         await new Promise(resolve => {
           video.onloadedmetadata = () => {
             // 获取实际视频的宽高比
             const actualWidth = settings.width || video.videoWidth;
             const actualHeight = settings.height || video.videoHeight;
-            
+
             // 根据实际宽高比调整video和canvas的尺寸
             if (actualWidth && actualHeight) {
               const aspectRatio = actualWidth / actualHeight;
               // 设置最大宽度为600，高度根据比例计算
               const maxWidth = 600;
               const height = Math.round(maxWidth / aspectRatio);
-              
+
               // 更新video尺寸
               video.width = maxWidth;
               video.height = height;
-              
+
               // 更新canvas尺寸
               canvasOutput.width = maxWidth;
               canvasOutput.height = height;
-              
+
               console.log(`设置视频尺寸: ${maxWidth}x${height}, 实际比例: ${aspectRatio}`);
             }
             resolve();
           };
         });
-        
+
         video.play();
+        // 开始捕获
+        isCapturing = true;
+        requestAnimationFrame(processFrame);
       } catch (err) {
         console.error('摄像头访问失败:', err);
         alert('无法访问摄像头:' + err);
@@ -252,29 +254,54 @@
         const result = cvQr.load("canvasInput");
         const infos = result?.getInfos();
         if (infos && infos.length > 0) {
-          const qrData = new TextEncoder().encode(infos[0]); // 将字符串转换为 Uint8Array
-          const blockId = new DataView(qrData.buffer).getUint32(0, true); // 前4字节为 blockId
+          let decodeMessage = window.atob(infos[0])
+          // const qrData = new TextEncoder().encode(infos[0]); // 将字符串转换为 Uint8Array
+          qrData = new Uint8Array(decodeMessage.length);
+          for (var i = 0; i < decodeMessage.length; i++) {
+            qrData[i] = decodeMessage.charCodeAt(i)
+          }
+          const dataView = new DataView(qrData.buffer);
+          const blockId = dataView.getUint32(0, true);
+          const thisMessageByte = dataView.getUint32(4, true);
+          const thisBlockSize = dataView.getUint32(8, true);
+
+          if (decoder == null) {
+            messageByte = thisMessageByte;
+            blockByte = thisBlockSize;
+            totalBlocks = Math.ceil(messageByte / blockByte);
+            decoder = module._createDecoder(BigInt(messageByte), blockByte);
+            console.log("Decoder initialized");
+            console.log(`messageByte: ${messageByte}, block byte: ${blockByte}`)
+          } else {
+            if (blockByte != thisBlockSize || messageByte != thisMessageByte) {
+              console.log("不是同一份数据")
+              document.getElementById("status").innerText = "错误：二维码与之前不是同一份数据"
+              return
+            }
+          }
+
 
           if (!decodedBlocks.has(blockId)) {
-            const blockData = qrData.slice(4); // 剩余部分为block内容
+            const blockData = qrData.slice(3 * 4); // 剩余部分为block内容
             const blockPtr = module._allocData(blockData.length);
             module.HEAPU8.set(blockData, blockPtr);
             console.log('param:', blockId, '\n', blockPtr, '\n', blockData.length);
 
             const decodeResult = module._decode(decoder, blockId, blockPtr, blockData.length);
-            module._freeDecodedData(blockPtr);
+            module._freeData(blockPtr);
 
             if (decodeResult === 1) { // More data is needed to decode.
               decodedBlocks.add(blockId);
               document.getElementById("status").innerText = `已识别 ${decodedBlocks.size} block, 预计需要 ${totalBlocks} block`;
             } else if (decodeResult === 0) { // Wirehair_Success
 
-              const dataPtr = module._getDecodedData(decoder, messageByte);
+              const dataPtr = module._getDecodedData(decoder, BigInt(messageByte));
               const decodedData = new Uint8Array(module.HEAPU8.buffer, dataPtr, messageByte);
               const resultText = new TextDecoder().decode(decodedData);
-              module._freeDecodedData(dataPtr);
+              module._freeData(dataPtr);
               document.getElementById("status").innerText = `解密完成: ${resultText}`;
-            
+              isCapturing = false
+
             } else {
               console.error('解码失败:', decodeResult);
               document.getElementById("status").innerText = `解码失败: ${decodeResult}`;
@@ -289,19 +316,18 @@
       requestAnimationFrame(processFrame);
     }
 
-    document.getElementById('startCapture').addEventListener('click', () => {
-      if (!stream) {
-        alert('请先打开摄像头');
-        return;
-      }
-      
-      isCapturing = true;
-      requestAnimationFrame(processFrame);
-    });
+    // document.getElementById('startCamera').addEventListener('click', () => {
+    //   if (!stream) {
+    //     return;
+    //   }
 
-    document.getElementById('stopCapture').addEventListener('click', () => {
-      isCapturing = false;
-    });
+    //   isCapturing = true;
+    //   requestAnimationFrame(processFrame);
+    // });
+
+    // document.getElementById('stopCamera').addEventListener('click', () => {
+    //   isCapturing = false;
+    // });
 
     document.getElementById('swapCanvasDimensions').addEventListener('click', () => {
       // 获取当前宽高
